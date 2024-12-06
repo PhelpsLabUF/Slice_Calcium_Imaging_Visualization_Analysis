@@ -1,0 +1,1784 @@
+---
+title: "CaTraceAnalysis"
+author: "Adrienne Widener"
+date: '2024-01-11'
+output: pdf_document
+---
+```{r}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(readxl)
+library(ggplot2)
+library(ggthemes)
+library(car)
+library(ggbreak)
+library(corrr)
+library(ggcorrplot)
+library(ggh4x)
+library(ggbeeswarm)
+library(ggpubr)
+library(svglite)
+library(ggforce)
+library(nlme)
+library(lme4)
+library(multcomp)
+library(nlme)
+library(lme4)
+#library(ggradar)
+options(scipen = 2, digits = 4)
+```
+
+##Joining large datasets 
+```{r}
+#Import donor characteristics and merge with long-form data sets for each stimulation 
+mfidata <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "ATPIF1 and ATP5B")
+mfidata <- as_tibble(mfidata)
+longmfidata <- pivot_longer(mfidata,
+                            cols = 2:3,
+                            names_to = "Marker",
+                            values_to = "MFI")
+  
+KCNJ11data <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "KCNJ11 and SDHC")
+KCNJ11data <- as_tibble(KCNJ11data)
+longKCNJ11data <- pivot_longer(KCNJ11data,
+                            cols = 2:3,
+                            names_to = "Marker",
+                            values_to = "MFI")
+joinedmfidata <- full_join(longKCNJ11data, longmfidata)
+SLC2A1data <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "SLC2A1 and PCB")
+SLC2A1data <- as_tibble(SLC2A1data)
+longSLC2A1data <- pivot_longer(SLC2A1data,
+                            cols = 2:3,
+                            names_to = "Marker",
+                            values_to = "MFI")
+joinedmfidata <- full_join(longSLC2A1data, joinedmfidata)
+CACNA1Ddata <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "CACNA1D and GCK")
+CACNA1Ddata <- as_tibble(CACNA1Ddata)
+longCACNA1Ddata <- pivot_longer(CACNA1Ddata,
+                            cols = 2:3,
+                            names_to = "Marker",
+                            values_to = "MFI")
+joinedmfidata <- full_join(longCACNA1Ddata, joinedmfidata)
+NDUFS1data <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "NDUFS1 and PERK")
+NDUFS1data <- as_tibble(NDUFS1data)
+longNDUFS1data <- pivot_longer(NDUFS1data,
+                            cols = 2:3,
+                            names_to = "Marker",
+                            values_to = "MFI")
+joinedmfidata <- full_join(longNDUFS1data, joinedmfidata)
+COX11data <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "COX11 and IDH3A")
+COX11data <- as_tibble(COX11data)
+longCOX11data <- pivot_longer(COX11data,
+                            cols = 2:3,
+                            names_to = "Marker",
+                            values_to = "MFI")
+joinedmfidata <- full_join(longCOX11data, joinedmfidata)
+OGDHdata <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "OGDH and GAPDH")
+OGDHdata <- as_tibble(OGDHdata)
+longOGDHdata <- pivot_longer(OGDHdata,
+                            cols = 2:3,
+                            names_to = "Marker",
+                            values_to = "MFI")
+joinedmfidata <- full_join(longOGDHdata, joinedmfidata)
+UQCRQdata <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "UQCRQ")
+UQCRQdata <- as_tibble(UQCRQdata)
+longUQCRQdata <- pivot_longer(UQCRQdata,
+                            cols = 2,
+                            names_to = "Marker",
+                            values_to = "MFI")
+joinedmfidata <- full_join(longUQCRQdata, joinedmfidata)
+PGAM2data <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "PGAM2 and C1HLA")
+PGAM2data <- as_tibble(PGAM2data)
+longPGAM2data <- pivot_longer(PGAM2data,
+                            cols = 2:3,
+                            names_to = "Marker",
+                            values_to = "MFI")
+joinedmfidata <- full_join(longPGAM2data, joinedmfidata)
+PFKFB4data <- read_xlsx("./Data/Panel MFI Data.xlsx", sheet = "PFKFB4 and IRE1a")
+PFKFB4data <- as_tibble(PFKFB4data)
+longPFKFB4data <- pivot_longer(PFKFB4data,
+                            cols = 2:3,
+                            names_to = "Marker",
+                            values_to = "MFI")
+joinedmfidata <- full_join(longPFKFB4data, joinedmfidata)
+insulindata <- read_xlsx("./Data/Ins MFIs.xlsx")
+longinsulindata <- pivot_longer(insulindata, 
+                                cols = 2, 
+                                names_to = "Marker", 
+                                values_to = "MFI")
+joinedmfidata <- full_join(longinsulindata, joinedmfidata)
+
+NPODData <- read_xlsx("./Data/nPODDonorCharacteristics_updated.xlsx")
+subsetNPOD <- distinct(NPODData, Case, Type, .keep_all = TRUE)
+mfidata_merge <- merge(NPODData, joinedmfidata)
+mfidata_merge <- mfidata_merge %>%
+    mutate(Type_fct = factor(Type)) %>%
+  mutate(Type_fct = fct_relevel(Type_fct, 
+                         c("No Diabetes","sAab+","mAab+", "T1D"))) 
+```
+```{r}
+#Insulin 
+Insulindata <- filter(mfidata_merge, Marker == "Insulin")
+Insulinmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = Insulindata,
+                 method = "REML")
+Insulinmodelaov = anova.lme(Insulinmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(Insulinmodelaov)
+ posthocInsulin = glht(Insulinmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsInsulin = summary(posthocInsulin,
+               test = adjusted("single-step"))
+tidy(mcsInsulin)
+hist(residuals(Insulinmodel))
+ggdensity(Insulindata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "Insulin MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+ggplot()+
+  geom_quasirandom(data = Insulindata, aes(x = Type_fct, y = MFI, color = Case), alpha = 0.5, width = 0.25, size = 0.5)+
+  labs(x = "Type",
+       y = "Insulin MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("insulinmfi_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+```{r}
+#ATPIF1 
+ATPIF1data <- filter(mfidata_merge, Marker == "ATPIF1")
+ATPIF1model = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = ATPIF1data,
+                 method = "REML")
+ATPIF1modelaov = anova.lme(ATPIF1model, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(ATPIF1modelaov)
+ posthocATPIF1 = glht(ATPIF1model, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsATPIF1 = summary(posthocATPIF1,
+               test = adjusted("single-step"))
+tidy(mcsATPIF1)
+hist(residuals(ATPIF1model))
+
+ggdensity(ATPIF1data, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "ATPIF1 MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+ggplot()+
+  geom_quasirandom(data = ATPIF1data, aes(x = Type_fct, y = MFI, color = Case), alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "ATPIF1 MFI")+
+     scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("ATPIF1_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#ATP5B 
+ATP5Bdata <- filter(mfidata_merge, Marker == "ATP5B")
+ATP5Bmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = ATP5Bdata,
+                 method = "REML")
+ATP5Bmodelaov = anova.lme(ATP5Bmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(ATP5Bmodelaov)
+ posthocATP5B = glht(ATP5Bmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsATP5B = summary(posthocATP5B,
+               test = adjusted("single-step"))
+
+tidy(mcsATP5B)
+hist(residuals(ATP5Bmodel))
+
+ggdensity(ATP5Bdata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "ATP5B MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(ATP5Bdata$mfi)
+
+ggplot()+
+  geom_quasirandom(data = ATP5Bdata, aes(x = Type_fct, y = MFI, color = Case), alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "ATP5B MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("ATP5b_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#KCNJ11 
+KCNJ11data <- filter(mfidata_merge, Marker == "KCNJ11")
+KCNJ11model = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = KCNJ11data,
+                 method = "REML")
+KCNJ11modelaov = anova.lme(KCNJ11model, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(KCNJ11modelaov)
+ posthocKCNJ11 = glht(KCNJ11model, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsKCNJ11 = summary(posthocKCNJ11,
+               test = adjusted("single-step"))
+leastsquaremcsKCNJ11 = lsmeans(KCNJ11model,
+                           pairwise ~ Type_fct,
+                           adjust = "Tukey")
+tidy(mcsKCNJ11)
+hist(residuals(KCNJ11model))
+
+ggdensity(KCNJ11data, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "KCNJ11 MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+
+ggplot()+
+  geom_quasirandom(data = KCNJ11data, aes(x = Type_fct, y = MFI, color = Case), alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "KCNJ11 MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("KCNJ11_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#SDHC 
+SDHCdata <- filter(mfidata_merge, Marker == "SDHC")
+SDHCmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = SDHCdata,
+                 method = "REML")
+SDHCmodelaov = anova.lme(SDHCmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(SDHCmodelaov)
+ posthocSDHC = glht(SDHCmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsSDHC = summary(posthocSDHC,
+               test = adjusted("single-step"))
+leastsquaremcsSDHC = lsmeans(SDHCmodel,
+                           pairwise ~ Type_fct,
+                           adjust = "Tukey")
+tidy(mcsSDHC)
+hist(residuals(SDHCmodel))
+
+ggdensity(SDHCdata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "SDHC MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(SDHCdata$mfi)
+ggplot()+
+  geom_quasirandom(data = SDHCdata, aes(x = Type_fct, y = MFI, color = Case), alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "SDHC MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("SDHC_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#SLC2A1
+SLC2A1data <- filter(mfidata_merge, Marker == "SLC2A1")
+SLC2A1model = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = SLC2A1data,
+                 method = "REML")
+SLC2A1modelaov = anova.lme(SLC2A1model, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(SLC2A1modelaov)
+ posthocSLC2A1 = glht(SLC2A1model, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsSLC2A1 = summary(posthocSLC2A1,
+               test = adjusted("single-step"))
+leastsquaremcsSLC2A1 = lsmeans(SLC2A1model,
+                           pairwise ~ Type_fct,
+                           adjust = "Tukey")
+tidy(mcsSLC2A1)
+hist(residuals(SLC2A1model))
+
+ggdensity(SLC2A1data, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "SLC2A1 MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+ggplot()+
+  geom_quasirandom(data = SLC2A1data, aes(x = Type_fct, y = MFI, color = Case), alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "SLC2A1 MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("SLC2A1_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#PCB
+PCBdata <- filter(mfidata_merge, Marker == "PCB")
+PCBmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = PCBdata,
+                 method = "REML")
+PCBmodelaov = anova.lme(PCBmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(PCBmodelaov)
+ posthocPCB = glht(PCBmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsPCB = summary(posthocPCB,
+               test = adjusted("single-step"))
+tidy(mcsPCB)
+hist(residuals(PCBmodel))
+
+ggdensity(PCBdata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "PCB MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+ggplot()+
+  geom_quasirandom(data = PCBdata, aes(x = Type_fct, y = MFI, color = Case), alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "PCB MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("PCB_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#CACNA1D
+CACNA1Ddata <- filter(mfidata_merge, Marker == "CACNA1D")
+CACNA1Dmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = CACNA1Ddata,
+                 method = "REML")
+CACNA1Dmodelaov = anova.lme(CACNA1Dmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(CACNA1Dmodelaov)
+ posthocCACNA1D = glht(CACNA1Dmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsCACNA1D = summary(posthocCACNA1D,
+               test = adjusted("single-step"))
+leastsquaremcsCACNA1D = lsmeans(CACNA1Dmodel,
+                           pairwise ~ Type_fct,
+                           adjust = "Tukey")
+tidy(mcsCACNA1D)
+hist(residuals(CACNA1Dmodel))
+
+ggdensity(CACNA1Ddata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "CACNA1D MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(CACNA1Ddata$mfi)
+ggplot()+
+  geom_quasirandom(data = CACNA1Ddata, aes(x = Type_fct, y = MFI, color = Case), alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "CACNA1D MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("CACNA1D_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#GCK
+GCKdata <- filter(mfidata_merge, Marker == "GCK")
+GCKmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = GCKdata,
+                 method = "REML")
+GCKmodelaov = anova.lme(GCKmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(GCKmodelaov)
+ posthocGCK = glht(GCKmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsGCK = summary(posthocGCK,
+               test = adjusted("single-step"))
+tidy(mcsGCK)
+hist(residuals(GCKmodel))
+
+ggdensity(GCKdata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "GCK MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(GCKdata$mfi)
+ggplot()+
+  geom_quasirandom(data = GCKdata, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "GCK MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("GCK_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#NDUFS1
+NDUFS1data <- filter(mfidata_merge, Marker == "NDUFS1")
+NDUFS1model = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = NDUFS1data,
+                 method = "REML")
+NDUFS1modelaov = anova.lme(NDUFS1model, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(NDUFS1modelaov)
+ posthocNDUFS1 = glht(NDUFS1model, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsNDUFS1 = summary(posthocNDUFS1,
+               test = adjusted("single-step"))
+tidy(mcsNDUFS1)
+hist(residuals(NDUFS1model))
+
+ggdensity(NDUFS1data, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "NDUFS1 MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(NDUFS1data$mfi)
+ggplot()+
+  geom_quasirandom(data = NDUFS1data, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "NDUFS1 MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("NDUFS1_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#PERK
+PERKdata <- filter(mfidata_merge, Marker == "PERK")
+PERKmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = PERKdata,
+                 method = "REML")
+PERKmodelaov = anova.lme(PERKmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(PERKmodelaov)
+ posthocPERK = glht(PERKmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsPERK = summary(posthocPERK,
+               test = adjusted("single-step"))
+tidy(mcsPERK)
+hist(residuals(PERKmodel))
+ggdensity(PERKdata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "PERK MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(PERKdata$mfi)
+ggplot()+
+  geom_quasirandom(data = ATP5Bdata, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "ATP5B MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("ATP5B_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#COX11
+COX11data <- filter(mfidata_merge, Marker == "COX11")
+COX11model = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = COX11data,
+                 method = "REML")
+COX11modelaov = anova.lme(COX11model, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(COX11modelaov)
+ posthocCOX11 = glht(COX11model, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsCOX11 = summary(posthocCOX11,
+               test = adjusted("single-step"))
+tidy(mcsCOX11)
+hist(residuals(COX11model))
+
+ggdensity(COX11data, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "COX11 MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+ggplot()+
+  geom_quasirandom(data = COX11data, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "COX11 MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("COX11_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#IDH3A
+IDH3Adata <- filter(mfidata_merge, Marker == "IDH3A")
+IDH3Amodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = IDH3Adata,
+                 method = "REML")
+IDH3Amodelaov = anova.lme(IDH3Amodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(IDH3Amodelaov)
+ posthocIDH3A = glht(IDH3Amodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsIDH3A = summary(posthocIDH3A,
+               test = adjusted("single-step"))
+tidy(mcsIDH3A)
+hist(residuals(IDH3Amodel))
+
+ggdensity(IDH3Adata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "IDH3A MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+ggplot()+
+  geom_quasirandom(data = IDH3Adata, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "IDH3A MFI")+
+    scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("IDH3A_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#OGDH
+OGDHdata <- filter(mfidata_merge, Marker == "OGDH")
+OGDHmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = OGDHdata,
+                 method = "REML")
+OGDHmodelaov = anova.lme(OGDHmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(OGDHmodelaov)
+ posthocOGDH = glht(OGDHmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsOGDH = summary(posthocOGDH,
+               test = adjusted("single-step"))
+tidy(mcsOGDH)
+hist(residuals(OGDHmodel))
+
+ggdensity(OGDHdata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "OGDH MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(OGDHdata$mfi)
+
+ggplot()+
+  geom_quasirandom(data = OGDHdata, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "OGDH MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("OGDH_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#GAPDH
+GAPDHdata <- filter(mfidata_merge, Marker == "GAPDH")
+GAPDHmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = GAPDHdata,
+                 method = "REML")
+GAPDHmodelaov = anova.lme(GAPDHmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(GAPDHmodelaov)
+ posthocGAPDH = glht(GAPDHmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsGAPDH = summary(posthocGAPDH,
+               test = adjusted("single-step"))
+tidy(mcsGAPDH)
+hist(residuals(GAPDHmodel))
+
+ggdensity(GAPDHdata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "GAPDH MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(GAPDHdata$mfi)
+
+ggplot()+
+  geom_quasirandom(data = GAPDHdata, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "GAPDH MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("GAPDH_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#UQCRQ
+UQCRQdata <- filter(mfidata_merge, Marker == "UQCRQ")
+UQCRQmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = UQCRQdata,
+                 method = "REML")
+UQCRQmodelaov = anova.lme(UQCRQmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(UQCRQmodelaov)
+ posthocUQCRQ = glht(UQCRQmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsUQCRQ = summary(posthocUQCRQ,
+               test = adjusted("single-step"))
+tidy(mcsUQCRQ)
+hist(residuals(UQCRQmodel))
+
+ggdensity(UQCRQdata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "UQCRQ MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(UQCRQdata$mfi)
+
+ggplot()+
+  geom_quasirandom(data = UQCRQdata, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "UQCRQ MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("UQCRQ_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#PGAM2
+PGAM2data <- filter(mfidata_merge, Marker == "PGAM2")
+PGAM2model = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = PGAM2data,
+                 method = "REML")
+PGAM2modelaov = anova.lme(PGAM2model, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(PGAM2modelaov)
+ posthocPGAM2 = glht(PGAM2model, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsPGAM2 = summary(posthocPGAM2,
+               test = adjusted("single-step"))
+tidy(mcsPGAM2)
+hist(residuals(PGAM2model))
+
+ggdensity(PGAM2data, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "PGAM2 MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(PGAM2data$mfi)
+
+ggplot()+
+  geom_quasirandom(data = PGAM2data, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "PGAM2 MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("PGAM2_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#C1HLA
+C1HLAdata <- filter(mfidata_merge, Marker == "C1HLA")
+C1HLAmodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = C1HLAdata,
+                 method = "REML")
+C1HLAmodelaov = anova.lme(C1HLAmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(C1HLAmodelaov)
+ posthocC1HLA = glht(C1HLAmodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsC1HLA = summary(posthocC1HLA,
+               test = adjusted("single-step"))
+tidy(mcsC1HLA)
+hist(residuals(C1HLAmodel))
+
+ggdensity(C1HLAdata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "C1HLA MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(C1HLAdata$mfi)
+
+ggplot()+
+  geom_quasirandom(data = C1HLAdata, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "C1HLA MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("C1HLA_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#PFKFB4
+PFKFB4data <- filter(mfidata_merge, Marker == "PFKFB4")
+PFKFB4model = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = PFKFB4data,
+                 method = "REML")
+PFKFB4modelaov = anova.lme(PFKFB4model, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(PFKFB4modelaov)
+ posthocPFKFB4 = glht(PFKFB4model, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsPFKFB4 = summary(posthocPFKFB4,
+               test = adjusted("single-step"))
+tidy(mcsPFKFB4)
+hist(residuals(PFKFB4model))
+
+ggdensity(PFKFB4data, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "PFKFB4 MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(PFKFB4data$mfi)
+
+ggplot()+
+  geom_quasirandom(data = PFKFB4data, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "PFKFB4 MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("PFKFB4_allcases.pdf", width = 60, height = 60, unit = "mm")
+```
+
+```{r}
+#IRE1a
+IRE1adata <- filter(mfidata_merge, Marker == "IRE1a")
+IRE1amodel = lme(MFI ~ Type_fct, random=~1|Case,
+                 data = IRE1adata,
+                 method = "REML")
+IRE1amodelaov = anova.lme(IRE1amodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(IRE1amodelaov)
+ posthocIRE1a = glht(IRE1amodel, 
+                     linfct = mcp(Type_fct = "Tukey"))
+ mcsIRE1a = summary(posthocIRE1a,
+               test = adjusted("single-step"))
+tidy(mcsIRE1a)
+hist(residuals(IRE1amodel))
+
+ggdensity(IRE1adata, x = "MFI", 
+          add = "mean",
+          color = "Type", 
+          title = "IRE1a MFI")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(IRE1adata$mfi)
+
+ggplot()+
+  geom_quasirandom(data = IRE1adata, aes(x = Type_fct, y = MFI, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "IRE1a MFI")+
+   scale_color_manual(values = c(`6530` = "#000000", 
+                                 `6535` = "#111111", 
+                                 `6539` = "#222222", 
+                                 `6540` = "#333333",
+                                 `6552` = "#444444",
+                                 `CV14` = "#555555",
+                                 `6583` = "#666666",
+                                 `6584` = "#777777",
+                                 `6586` = "#888888",
+                                 `6588` = "#999999",
+                                 `6590` = "#aaaaaa",
+                                 `6597` = "#bbbbbb",
+                                 `6598` = "#cccccc",
+                                 `6559` = "#dddddd",
+                                 `6516` = "#eeeeee",
+                                 `6518` = "#dd076f",
+                                 `6532` = "#f6087b",
+                                 `6538` = "#f72188",
+                                 `6558` = "#f83996",
+                                 `6562` = "#f952a3",
+                                 `6569` = "#f96bb0",
+                                 `CV15` = "#fa83bd",
+                                 `6573` = "#fb9cca",
+                                 `6573` = "#fcb5d7",
+                                 `6582` = "#fcb5d7",
+                                 `6553` = "#fdcde4",
+                                 `6505` = "#310118",
+                                 `6512` = "#490225",
+                                 `6424` = "#620331",
+                                 `6429` = "#7b043d",
+                                 `6450` = "#93054a",
+                                 `6521` = "#ac0556",
+                                 `6549` = "#c50663",
+                                 `6523` = "#02242c",
+                                 `6533` = "#044958",
+                                 `6536` = "#066e84",
+                                 `6550` = "#0893b1",
+                                 `6551` = "#0ab8dd",
+                                 `6563` = "#21d0f4",
+                                 `6578` = "#4dd9f6",
+                                 `6579` = "#7ae2f8",
+                                 `6591` = "#a6ecfa",
+                                 `6526` = "#d2f5fc"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+  #       strip.placement = "outside",
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("IRE1a_allcases.pdf", width = 60, height = 60, unit = "mm")
+```

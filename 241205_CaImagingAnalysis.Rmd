@@ -1,0 +1,1282 @@
+---
+title: "CaTraceAnalysis"
+author: "Adrienne Widener"
+date: '2024-01-11'
+output: pdf_document
+---
+```{r}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(readxl)
+library(ggplot2)
+library(ggthemes)
+library(car)
+library(ggbreak)
+library(corrr)
+library(ggcorrplot)
+library(ggh4x)
+library(ggbeeswarm)
+library(ggpubr)
+library(svglite)
+library(ggforce)
+library(nlme)
+library(multcomp)
+library(lsmeans)
+library(moments)
+library(dplyr)
+options(scipen = 2, digits = 4)
+```
+##Defining the function for normalization and tidying for first slice recording
+```{r #AnalyzeCaTraceInitial Function}
+AnalyzeCaTraceInitial <- function(filename, Case, Slice, framerate, HGStart, 
+                                  HGEnd, KCLStart) 
+{
+  rawdata <- read_xlsx(filename)
+  framerate <<- framerate/60
+  HGStart_Min <<- HGStart*framerate
+  HGEnd_Min <<- HGEnd*framerate
+  KCLEnd_Min <<- max(rawdata$Frame)*framerate
+  KCLStart_Min <<- KCLStart*framerate
+  KCLStartextended_Min <<- KCLStart_Min - (2*framerate)
+  f0data1 <<- filter(rawdata, Frame %in% 1:100)
+  f0data2 <<- dplyr::select(f0data1, -Frame)
+  normaldata <- dplyr::select(rawdata, -Frame)
+  for (i in 1:ncol(normaldata)) {
+  f0 <<- colMeans(f0data2[,i])
+  for(j in 1:nrow(normaldata)) {
+    normaldata[j,i] <- normaldata[j,i]/f0}
+  }
+
+  data <- normaldata %>%
+  mutate(time = rawdata$Frame*framerate)
+  LGData <- filter(data, time >= framerate & time < HGStart_Min)
+  LGHGData <- filter(data, time < HGEnd_Min)
+  HGData <-filter(data, time >= HGStart_Min & time < HGEnd_Min)
+  KCLData <- filter(data, time >= KCLStart_Min)
+  extendedKCLData <- filter(data, time >= KCLStartextended_Min)
+  LongData <<- data %>%
+  pivot_longer(
+    cols = 1:ncol(data)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+    group_by(Cell) %>%
+    mutate(Cell = as_factor(Cell)) %>%
+    ungroup() %>%
+    group_by(time) %>%
+    mutate(
+      average = mean(Fluorescence),
+      Case, 
+      Slice)
+  LongHGData <<- HGData %>%
+  pivot_longer(
+    cols = 1:ncol(HGData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+    group_by(Cell) %>%
+    mutate(
+           cellmfi = mean(Fluorescence)) %>%
+    ungroup()%>%
+  group_by(time) %>%
+  mutate(
+         average = mean(Fluorescence),
+         time = time - HGStart_Min, 
+         Case,  
+         Slice)
+  LongLGData <- LGData %>%
+  pivot_longer(
+    cols = 1:ncol(LGData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+    group_by(Cell)%>%
+    mutate(
+           cellmfi = mean(Fluorescence))%>%
+    ungroup()%>%
+  group_by(time) %>%
+  mutate(
+        average = mean(Fluorescence),
+        Case, 
+        Slice)
+  LongLGHGData <- LGHGData %>%
+  pivot_longer(
+    cols = 1:ncol(LGHGData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+  group_by(time) %>%
+  mutate(
+        average = mean(Fluorescence),
+        Case, 
+        Slice)
+  End <- length(data)*framerate
+  LongKCLData <<- KCLData %>%
+  pivot_longer(
+    cols = 1:ncol(KCLData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+    group_by(Cell)%>%
+    mutate(
+           cellmfi = mean(Fluorescence)) %>%
+    ungroup() %>%
+  group_by(time) %>%
+  mutate(average = mean(Fluorescence),
+         time = time - KCLStart_Min,
+         Case,
+         Slice)
+   LongextendedKCLData <<- extendedKCLData %>%
+  pivot_longer(
+    cols = 1:ncol(extendedKCLData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+  group_by(time) %>%
+  mutate(average = mean(Fluorescence),
+         time = time - KCLStart_Min,
+         Case,
+         Slice)
+  FullData <<- LongData 
+  FullLGData <<- LongLGData
+  FullLGHGData <<- LongLGHGData
+  FullHGData <<- LongHGData
+  FullKCLData <<- LongKCLData
+  FullextendKCLData <<- LongextendedKCLData
+}
+```
+
+```{r #6505 Slice 2 }
+AnalyzeCaTraceInitial("./data/6505_S2_I1 ROI traces AW.xlsx", "6505", 2, 2.00, 
+                      151, 480, 481)
+```
+##Defining the function for normalization and tidying data for all slice recordings 
+```{r #AnalyzeCaTrace Function}
+AnalyzeCaTrace <- function(filename, Case, Slice, framerate, HGStart, HGEnd, 
+                           KCLStart) 
+{
+  rawdata <- read_xlsx(filename)
+  framerate <<- framerate/60
+  HGStart_Min <<- HGStart*framerate
+  HGEnd_Min <<- HGEnd*framerate
+  KCLEnd_Min <<- max(rawdata$Frame)*framerate
+  KCLStart_Min <<- KCLStart*framerate
+  KCLStartextended_Min <<- KCLStart_Min - (2*framerate)
+  f0data1 <<- filter(rawdata, Frame %in% 1:100)
+  f0data2 <<- dplyr::select(f0data1, -Frame)
+  normaldata <- dplyr::select(rawdata, -Frame)
+  for (i in 1:ncol(normaldata)) {
+  f0 <<- colMeans(f0data2[,i])
+  for(j in 1:nrow(normaldata)) {
+    normaldata[j,i] <- normaldata[j,i]/f0}
+  }
+  data <- normaldata %>%
+    #create a new variable that transforms frame into time 
+    mutate(time = rawdata$Frame*framerate)
+  #separate out the LG Data based on stimulation times 
+  LGData <- filter(data, time >= framerate & time < HGStart_Min)
+  #separate out the LG and HG Data based on stimulation times 
+  LGHGData <- filter(data, time < HGEnd_Min)
+  #Separate out the HG data based on stimulation times 
+  HGData <-filter(data, time >= HGStart_Min & time < HGEnd_Min)
+  #separate out the KCL data based on stimulation times 
+  KCLData <- filter(data, time >= KCLStart_Min)
+  extendedKCLData <- filter(data, time >= KCLStartextended_Min)
+  #pivot the table to long-form data 
+  LongData <<- data %>%
+  pivot_longer(
+    cols = 1:ncol(data)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+    mutate(Cell = as_factor(Cell)) %>%
+    group_by(time) %>%
+    #take the average of each slice for each time 
+    mutate(
+      average = mean(Fluorescence),
+      Case, 
+      Slice)
+  LongHGData <<- HGData %>%
+  pivot_longer(
+    cols = 1:ncol(HGData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+    group_by(Cell) %>%
+    mutate(
+           cellmfi = mean(Fluorescence))%>%
+    ungroup()%>%
+  group_by(time) %>%
+  mutate(average = mean(Fluorescence),
+         time = time - HGStart_Min,
+         Case,
+         Slice)
+  LongLGData <- LGData %>%
+  pivot_longer(
+    cols = 1:ncol(LGData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+    group_by(Cell)%>%
+    mutate(
+           cellmfi = mean(Fluorescence))%>%
+    ungroup()%>%
+  group_by(time) %>%
+  mutate(average = mean(Fluorescence),
+        Case, 
+        Slice)
+  LongLGHGData <- LGHGData %>%
+  pivot_longer(
+    cols = 1:ncol(LGHGData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+  group_by(time) %>%
+  mutate(average = mean(Fluorescence),
+        Case, 
+        Slice)
+  End <- length(data)
+  LongKCLData <<- KCLData %>%
+  pivot_longer(
+    cols = 1:ncol(KCLData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+    group_by(Cell) %>%
+    mutate(
+           cellmfi = mean(Fluorescence))%>%
+    ungroup() %>%
+  group_by(time) %>%
+  mutate(average = mean(Fluorescence),
+         time = time - KCLStart_Min,
+         Case, 
+         Slice)
+  LongextendedKCLData <<- extendedKCLData %>%
+  pivot_longer(
+    cols = 1:ncol(extendedKCLData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+  group_by(time) %>%
+  mutate(average = mean(Fluorescence),
+         time = time - KCLStart_Min,
+         Case,
+         Slice)
+  #Combine the data for this set to the full data set 
+  FullData <<- rbind(FullData, LongData) 
+  FullLGData <<- rbind(FullLGData, LongLGData)
+  FullLGHGData <<- rbind(FullLGHGData, LongLGHGData)
+  FullHGData <<- rbind(FullHGData, LongHGData)
+  FullKCLData <<- rbind(FullKCLData, LongKCLData)
+  FullextendKCLData <<- rbind(FullextendKCLData, LongextendedKCLData)
+}
+```
+
+```{r All Slice Cases}
+#compute the function for every slice recording 
+AnalyzeCaTrace("./data/6505_S5_I1 ROI traces AW.xlsx", "6505", 
+               5, 2.00, 151, 480, 481)
+AnalyzeCaTrace("./data/6505_S6_I1 ROI traces AW.xlsx", "6505", 
+               6, 2.00, 151, 480, 481)
+AnalyzeCaTrace("./data/6512_S2_I1 ROI traces AW.xlsx", "6512", 
+               2, 2.00, 211, 885, 886)
+AnalyzeCaTrace("./data/6516_S1_I1 ROI traces AW.xlsx", "6516", 
+               1, 2.31, 130, 517, 518)
+AnalyzeCaTrace("./data/6516_S4_I1 ROI traces AW.xlsx", "6516", 
+               4, 2.31, 130, 519, 520)
+AnalyzeCaTrace("./data/6516_S6_I1 ROI traces AW.xlsx", "6516", 
+               6, 2.31, 130, 777, 778)
+AnalyzeCaTrace("./data/6516_S7_I1 ROI traces AW.xlsx", "6516", 
+               7, 2.31, 130, 518, 519)
+AnalyzeCaTrace("./data/6516_S8_I1 ROI traces AW.xlsx", "6516", 
+               8, 2.31, 130, 1038, 1039)
+AnalyzeCaTrace("./data/6518_S4_I1 ROI traces AW.xlsx", "6518", 
+               4, 3.52, 86, 255, 256)
+AnalyzeCaTrace("./data/6523_S3_I1 ROI traces AW.xlsx", "6523", 
+               3, 2.73, 67, 264, 265)
+AnalyzeCaTrace("./data/6523_S4_I1 ROI traces AW.xlsx", "6523", 
+               4, 2.73, 67, 264, 265)
+AnalyzeCaTrace("./data/6530_S1_I1 ROI traces AW.xlsx", "6530", 
+               1, 2.00, 151, 600, 601)
+AnalyzeCaTrace("./data/6530_S3_I1 ROI traces AW.xlsx", "6530", 
+               3, 2.00, 151, 600, 601)
+AnalyzeCaTrace("./data/6530_S4_I1 ROI traces AW.xlsx", "6530", 
+               4, 2.00, 151, 600, 601)
+AnalyzeCaTrace("./data/6532_S6_I1 ROI traces AW.xlsx", "6532", 
+               6, 2.00, 151, 600, 601)
+AnalyzeCaTrace("./data/6533_S10_I1 ROI traces AW.xlsx", "6533", 
+               10, 2.5, 118, 470, 471)
+AnalyzeCaTrace("./data/6535_S8_I1 ROI traces AW.xlsx", "6535", 
+               8, 2.32, 130, 517, 777)
+AnalyzeCaTrace("./data/6536_S4_I1 ROI traces AW.xlsx", "6536", 
+               4, 2.32, 130, 517, 777)
+AnalyzeCaTrace("./data/6538_S4_I1 ROI traces AW.xlsx", "6538", 
+               4, 2.32, 152, 543, 544)
+AnalyzeCaTrace("./data/6539_S1_I1 ROI traces AW.xlsx", "6539", 
+               1, 2.31, 130, 518, 519) 
+AnalyzeCaTrace("./data/6539_S2_I1 ROI traces AW.xlsx", "6539", 
+               2, 2.31, 130, 518, 519)
+AnalyzeCaTrace("./data/6540_S3_I1 ROI traces AW.xlsx", "6540", 
+               3, 2.32, 130, 517, 518)
+AnalyzeCaTrace("./data/6550_S2_I2 ROI traces AW.xlsx", "6550", 
+               2, 2.32, 130, 517, 648)
+AnalyzeCaTrace("./data/6551_S1_I1 ROI traces AW.xlsx", "6551", 
+               1, 0.37, 799, 3204, 3991)
+AnalyzeCaTrace("./data/6551_S2_2nd concat ROI traces AW.xlsx", "6551", 
+               2, 0.37, 799, 3204, 3991)
+AnalyzeCaTrace("./data/6551_S4_I1 ROI traces AW.xlsx", "6551", 
+               4, 0.37, 799, 3204, 3991)
+AnalyzeCaTrace("./data/6551_S5_I3 ROI traces AW.xlsx", "6551", 
+               5, 0.37, 799, 3204, 3991)
+AnalyzeCaTrace("./data/6551_S6_I1 ROI traces AW.xlsx", "6551", 
+               6, 0.37, 799, 3204, 3991)
+AnalyzeCaTrace("./data/6552_S1_I1 ROI traces AW.xlsx", "6552", 
+               1, 0.37, 799, 3192, 3991)
+AnalyzeCaTrace("./data/6552_S4_I1bigger ROI traces AW.xlsx", "6552", 
+               4, 0.37, 799, 3192, 3991)
+AnalyzeCaTrace("./data/6552_S5_I1 ROI traces AW.xlsx", "6552", 
+               5, 0.37, 799, 3192, 3991)
+AnalyzeCaTrace("./data/6558_S3_I1 ROI traces AW.xlsx", "6558", 
+               3, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6558_S4_I3 ROI traces AW.xlsx", "6558", 
+               4, 0.37, 799, 3180, 4772)
+AnalyzeCaTrace("./data/6562_S2_I3 ROI traces AW adjusted.xlsx", "6562", 
+               2, 0.37, 802, 3204, 4808)
+AnalyzeCaTrace("./data/6562_S3_I3 right ROI traces AW.xlsx", "6562", 
+               3, 0.37, 802, 3204, 4808)
+AnalyzeCaTrace("./data/6562_S4_I2 ROI traces AW.xlsx", "6562", 
+               4, 0.37, 802, 3204, 4808)
+AnalyzeCaTrace("./data/6563_S2_I3 ROI traces AW.xlsx", "6563", 
+               2, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/CV14_S6_I1 ROI traces AW.xlsx", "CV14", 
+               6, 0.37, 799, 3352, 4949)
+AnalyzeCaTrace("./data/CV14_S7_I3 ROI traces AW.xlsx", "CV14", 
+               7, 0.37, 799, 3352, 4949)
+AnalyzeCaTrace("./data/6569_S5_I2 ROI traces AW.xlsx", "6569", 
+               5, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6569_S6_I3 ROI traces AW.xlsx", "6569", 
+               6, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/CV15_S1_I3 ROI traces AW.xlsx", "CV15", 
+               1, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/CV15_S2_I5 ROI traces AW.xlsx", "CV15", 
+               2, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/CV15_S5_I4 ROI traces AW.xlsx", "CV15", 
+               5, 0.37, 799, 3192, 4790)  
+AnalyzeCaTrace("./data/CV15_S6_I1 ROI traces AW.xlsx", "CV15", 
+               6, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6573_S3_I1 ROI traces AW.xlsx", "6573", 
+               3, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6573_S4_I1 ROI traces AW.xlsx", "6573", 
+               4, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6578_S2_I2 ROI traces AW.xlsx", "6578", 
+               2, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6578_S3_I1 ROI traces AW.xlsx", "6578", 
+               3, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6578_S4_I4 ROI traces AW.xlsx", "6578", 
+               4, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6579_S1_I1 ROI traces AW.xlsx", "6579", 
+               1, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6579_S4_I1 ROI traces AW.xlsx", "6579", 
+               4, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6579_S7_I2and3_biggerislet AW.xlsx", "6579", 
+               7, 0.37, 764, 3053, 4581)
+AnalyzeCaTrace("./data/6582_S1_I1 ROI traces AW.xlsx", "6582", 
+               1, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6583_S1_I3 ROI traces AW.xlsx", "6583", 
+               1, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6583_S3_I1 ROI traces AW.xlsx", "6583", 
+               3, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6583_S4_I2 ROI traces AW.xlsx", "6583", 
+               4, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6584_S7_I4 ROI traces AW.xlsx", "6584", 
+               7, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6584_S9_I3 ROI traces AW.xlsx", "6584", 
+               9, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6586_S1_I10 ROI traces AW.xlsx", "6586", 
+               1, 0.37, 802, 3180, 4772)
+AnalyzeCaTrace("./data/6586_S2_I3 ROI traces AW.xlsx", "6586", 
+               2, 0.37, 802, 3180, 4772)
+AnalyzeCaTrace("./data/6586_S3_I4 ROI traces AW.xlsx", "6586", 
+               3, 0.37, 802, 3180, 4772)
+AnalyzeCaTrace("./data/6588_S1_I1 ROI traces AW.xlsx", "6588", 
+               1, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6588_S2_I5 ROI traces AW.xlsx", "6588", 
+               2, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6588_S3_I3 ROI traces AW.xlsx", "6588", 
+               3, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6588_S4_I4 ROI traces AW.xlsx", "6588", 
+               4, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6590_S3_I1 ROI traces AW.xlsx", "6590", 
+               3, 0.37, 799, 3192, 4772)
+AnalyzeCaTrace("./data/6590_S5_I1 ROI traces AW.xlsx", "6590", 
+               5, 0.37, 799, 3192, 4772)
+AnalyzeCaTrace("./data/6591_S6_I1 ROI traces AW.xlsx", "6591", 
+               6, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6591_S9_I1 ROI traces AW.xlsx", "6591", 
+               9, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6591_S10_I1 ROI traces AW.xlsx", "6591", 
+               10, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6597_S1_I2 ROI traces AW.xlsx", "6597", 
+               1, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6597_S3_I1 ROI traces AW.xlsx", "6597", 
+               3, 0.37, 796, 3180, 4772)
+AnalyzeCaTrace("./data/6598_S1_I6 ROI traces AW.xlsx", "6598", 
+               1, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6598_S2_I1 ROI traces AW.xlsx", "6598", 
+               2, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6598_S3_I9 ROI traces AW.xlsx", "6598", 
+               3, 0.37, 799, 3192, 4790)
+AnalyzeCaTrace("./data/6598_S4_I3 ROI traces AW.xlsx", "6598", 
+               4, 0.37, 799, 3192, 4790)
+```
+
+##Joining large datasets 
+```{r}
+#Import donor characteristics and merge with data sets for each stimulation 
+NPODData <- read_xlsx("./Data/Ca Summary Analysis combined aab.xlsx")
+subsetNPOD <- distinct(NPODData, Case, Slice, Type, .keep_all = TRUE) 
+FullLGHGData <- merge(NPODData, FullLGHGData)
+joinedData <- merge(NPODData, FullData)
+joinedLG <- merge(NPODData, FullLGData)
+joinedHG <- merge(NPODData, FullHGData)
+joinedLGHG <- merge (NPODData, FullLGHGData)
+joinedKCL <- merge(NPODData, FullKCLData)
+joinedextendKCL <- merge(NPODData, FullextendKCLData)
+```
+
+##Data Tidying - LG Stimulation - All recordings 
+```{r}
+#Filter the dataset to only include the average fluorescence of each slice at 
+#every time point 
+joinedLGAUC <- joinedLG %>%
+  distinct(Case, Slice, Type, `T Cell Count`, 
+           Cell, cellmfi, .keep_all = FALSE) %>% 
+  rename("cellmfiLG" = "cellmfi") %>%
+   mutate(Type_fct = factor(Type)) %>%
+  mutate(Type_fct = fct_relevel(Type_fct, 
+                         c("No Diabetes","Aab+","T1D"))) 
+joinedLGaverage <- filter(joinedLG, 
+                          Cell == 1)
+#Make the variable "type" into a factor, set levels 
+joinedLGaverageType <- filter(joinedLGaverage, 
+                              Type == "No Diabetes" | 
+                              Type == "Aab+" |
+                        
+                              Type == "T1D")%>%
+                      mutate(Type_fct = factor(Type)) %>%
+                      mutate(Type_fct = fct_relevel(Type_fct, 
+                             c("No Diabetes", 
+                               "Aab+",
+                               
+                               "T1D"))) %>%
+                      mutate(time_min = time/60)
+#Create a variable Ca-Slice to be able to sort by every recording 
+joinedLGaverageType$Caslice <- paste(joinedLGaverageType$Case, 
+                                     joinedLGaverageType$Slice, 
+                                     sep = "_")
+```
+
+## LG Peak Response Linear Mixed Effects Model 
+```{r}
+#Type as fixed effect, Case as random effect 
+#Low glucose max fluorescence linear mixed effects model 
+lgmaxmodel = lme(max ~ Type_fct, random=~1|Case,
+                 data = LGmax,
+                 method = "REML")
+#Observing residuals of model 
+hist(residuals(lgmaxmodel))
+#ANOVA for linear mixed effects model 
+lgmaxmodelaov = anova.lme(lgmaxmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(lgmaxmodelaov)
+#Post-hoc analysis
+posthoclgmax = glht(lgmaxmodel, 
+                    linfct = mcp(Type_fct = "Tukey"))
+mcslgmax = summary(posthoclgmax,
+              test = adjusted("single-step"))
+tidy(mcslgmax)
+ggdensity(LGmax, x = "max", 
+          add = "mean",
+          color = "Type_fct", 
+          title = "Low Glucose Max")+
+stat_overlay_normal_density(color = "black", linetype = "dashed")
+skewness(LGmax$max)
+```
+
+##Plotting - LG Stimulation Peak - All Recordings - Color by Case 
+```{r}
+ggplot()+
+  geom_quasirandom(data = LGmax, aes(x = Type_fct, y = max, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  ylim(1,4.5)+
+  labs(x = "Type",
+       y = "Peak Calcium Response (F/F0)")+
+  scale_color_manual(values = c(`6505` = "#520229", 
+                                `6512` = "#6d0337", 
+                                `6516` = "#000000", 
+                                `6518` = "#fcacd3",
+                                `6523` = "#011d22",
+                                `6530` = "#121212",
+                                `6532` = "#bf0660",
+                                `6533` = "#033a45",
+                                `6535` = "#242424",
+                                `6536` = "#045768",
+                                `6538` = "#db076e",
+                                `6539` = "#363636",
+                                `6540` = "#484848",
+                                `6550` = "#06748b",
+                                `6551` = "#0891ae",
+                                `6552` = "#5B5B5B",
+                                `6558` = "#f6087b",
+                                `6562` = "#f7238a",
+                                `6563` = "#09aed0",
+                                `CV14` = "#6d6d6d",
+                                `6569` = "#f83f98",
+                                `CV15` = "#f95aa7",
+                                `6573` = "#fa75b6",
+                                `6578` = "#0bcbf3",
+                                `6579` = "#2ed2f5",
+                                `6582` = "#fb91c4",
+                                `6583` = "#7f7f7f",
+                                `6584` = "#919191",
+                                `6586` = "#a3a3a3",
+                                `6588` = "#b6b6b6",
+                                `6590` = "#c8c8c8",
+                                `6591` = "#50daf6",
+                                `6597` = "#dadada",
+                                `6598` = "#ececec"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("peakresponselg.pdf", width = 60, height = 60, unit = "mm")
+```
+
+##Data Tidying - HG Stimulation - All recordings 
+```{r}
+joinedHGAUC <- joinedHG %>%
+  distinct(Case, Slice, Type, `T Cell Count`, 
+           Cell, cellmfi, .keep_all = FALSE) %>% 
+   mutate(Type_fct = factor(Type)) %>%
+   rename("cellmfiHG" = "cellmfi") %>%
+  mutate(Type_fct = fct_relevel(Type_fct, 
+                         c("No Diabetes","Aab+", "T1D"))) 
+joinedHGaverage <- filter(joinedHG, 
+                          Cell == 1)
+joinedHGaverageType <- filter(joinedHGaverage, 
+                              Type == "No Diabetes" | 
+                              Type == "Aab+" | 
+                              Type == "T1D")%>%
+                       mutate(Type_fct = factor(Type)) %>%
+                       mutate(Type_fct = fct_relevel(Type_fct, 
+                                                    c("No Diabetes", 
+                                                      "Aab+", 
+                                                      "T1D"))) %>%
+                       mutate(time_min = time/60)
+
+joinedHGaverageType$Caslice <- paste(joinedHGaverageType$Case, 
+                                     joinedHGaverageType$Slice, 
+                                     sep = "_")
+HGmax <- joinedHGaverageType %>%
+  group_by(Caslice) %>%
+  mutate(max = max(average)) %>%
+  distinct(Caslice, max, Type_fct, AUCPermin, AUCLGpermin, AUCHGpermin, 
+           AUCKCLpermin, `T Cell Count`, GroupingAab, .keep_all = TRUE) 
+meanHGmaxtype <- HGmax %>%
+  dplyr::select(Type_fct, max) %>%
+  group_by(Type_fct) %>%
+  summarise(mean = mean(max), sd = sd(max), se = sd/sqrt(n()))
+```
+
+## HG Peak Response - Linear Mixed Effects Model 
+```{r}
+#HGMax 
+hgmaxmodel = lme(max ~ Type_fct, random=~1|Case,
+                 data = HGmax,
+                 method = "REML")
+hgmaxmodelaov = anova.lme(hgmaxmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(hgmaxmodelaov)
+posthochgmax = glht(hgmaxmodel, 
+                    linfct = mcp(Type_fct = "Tukey"))
+mcshgmax = summary(posthochgmax,
+              test = adjusted("single-step"))
+tidy(mcshgmax)
+hist(residuals(hgmaxmodel))
+```
+
+
+##Plotting - HG Stimulation Peak - All Recordings - Color by Case 
+```{r}
+ggplot()+
+  geom_quasirandom(data = HGmax, aes(x = Type_fct, y = max, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+ ylim(1,4.5)+
+   labs(x = "Type",
+       y = "Peak Calcium Response (F/F0)")+
+  scale_color_manual(values = c(`6505` = "#520229", 
+                                `6512` = "#6d0337", 
+                                `6516` = "#000000", 
+                                `6518` = "#fcacd3",
+                                `6523` = "#011d22",
+                                `6530` = "#121212",
+                                `6532` = "#bf0660",
+                                `6533` = "#033a45",
+                                `6535` = "#242424",
+                                `6536` = "#045768",
+                                `6538` = "#db076e",
+                                `6539` = "#363636",
+                                `6540` = "#484848",
+                                `6550` = "#06748b",
+                                `6551` = "#0891ae",
+                                `6552` = "#5B5B5B",
+                                `6558` = "#f6087b",
+                                `6562` = "#f7238a",
+                                `6563` = "#09aed0",
+                                `CV14` = "#6d6d6d",
+                                `6569` = "#f83f98",
+                                `CV15` = "#f95aa7",
+                                `6573` = "#fa75b6",
+                                `6578` = "#0bcbf3",
+                                `6579` = "#2ed2f5",
+                                `6582` = "#fb91c4",
+                                `6583` = "#7f7f7f",
+                                `6584` = "#919191",
+                                `6586` = "#a3a3a3",
+                                `6588` = "#b6b6b6",
+                                `6590` = "#c8c8c8",
+                                `6591` = "#50daf6",
+                                `6597` = "#dadada",
+                                `6598` = "#ececec"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+  #       strip.placement = "outside",
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("peakresponsehg.pdf", width = 60, height = 60, unit = "mm")
+
+```
+
+
+##Data Tidying - KCL Stimulation - All recordings
+```{r}
+joinedKCLAUC <- joinedKCL %>%
+  distinct(Case, Slice, Type, `T Cell Count`, 
+           Cell,  cellmfi, .keep_all = FALSE) %>% 
+   mutate(Type_fct = factor(Type)) %>%
+   rename(
+          "cellmfiKCL" = "cellmfi") %>%
+  mutate(Type_fct = fct_relevel(Type_fct, 
+                         c("No Diabetes","Aab+","T1D"))) 
+joinedKCLaverage <- filter(joinedKCL, 
+                          Cell == 1)
+joinedKCLaverageType <- filter(joinedKCLaverage, 
+                              Type == "No Diabetes" | 
+                              Type == "Aab+" | 
+                            
+                              Type == "T1D")%>%
+                       mutate(Type_fct = factor(Type)) %>%
+                       mutate(Type_fct = fct_relevel(Type_fct, 
+                                                    c("No Diabetes", 
+                                                      "Aab+", 
+                                                    
+                                                      "T1D"))) %>%
+                       mutate(time_min = time/60)
+
+joinedKCLaverageType$Caslice <- paste(joinedKCLaverageType$Case, 
+                                     joinedKCLaverageType$Slice, 
+                                     sep = "_")
+```
+
+## KCL Peak Response - Linear Mixed Effects Model 
+``` {r}
+#KCLMax 
+kclmaxmodel = lme(max ~ Type_fct, random=~1|Case,
+                 data = KCLmax,
+                 method = "REML")
+kclmaxmodelaov = anova.lme(kclmaxmodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(kclmaxmodelaov)
+posthockclmax = glht(kclmaxmodel, 
+                    linfct = mcp(Type_fct = "Tukey"))
+mcskclmax = summary(posthockclmax,
+              test = adjusted("single-step"))
+tidy(mcskclmax)
+hist(residuals(kclmaxmodel))
+```
+
+##Plotting - KCL Stimulation Peak - All Recordings - Color by Case 
+```{r}
+ggplot()+
+  geom_quasirandom(data = KCLmax, aes(x = Type_fct, y = max, color = Case), 
+                   alpha = 0.75, width = 0.25, size = 1)+
+  labs(x = "Type",
+       y = "Peak Calcium Response (F/F0)")+
+  ylim(1,6)+
+   scale_color_manual(values = c(`6505` = "#520229", 
+                                 `6512` = "#6d0337", 
+                                 `6516` = "#000000", 
+                                 `6518` = "#fcacd3",
+                                 `6523` = "#011d22",
+                                 `6530` = "#121212",
+                                 `6532` = "#bf0660",
+                                 `6533` = "#033a45",
+                                 `6535` = "#242424",
+                                 `6536` = "#045768",
+                                 `6538` = "#db076e",
+                                 `6539` = "#363636",
+                                 `6540` = "#484848",
+                                 `6550` = "#06748b",
+                                 `6551` = "#0891ae",
+                                 `6552` = "#5B5B5B",
+                                 `6558` = "#f6087b",
+                                 `6562` = "#f7238a",
+                                 `6563` = "#09aed0",
+                                 `CV14` = "#6d6d6d",
+                                 `6569` = "#f83f98",
+                                 `CV15` = "#f95aa7",
+                                 `6573` = "#fa75b6",
+                                 `6578` = "#0bcbf3",
+                                 `6579` = "#2ed2f5",
+                                 `6582` = "#fb91c4",
+                                 `6583` = "#7f7f7f",
+                                 `6584` = "#919191",
+                                 `6586` = "#a3a3a3",
+                                 `6588` = "#b6b6b6",
+                                 `6590` = "#c8c8c8",
+                                 `6591` = "#50daf6",
+                                 `6597` = "#dadada",
+                                 `6598` = "#ececec"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("peakresponsekcl.pdf", width = 60, height = 60, unit = "mm")
+```
+
+## AUC Ratios
+```{r}
+aucratios <- merge(joinedLGAUC, joinedHGAUC)
+aucratios <- merge(aucratios, joinedKCLAUC)
+aucratios <- merge(aucratios, NPODData)
+aucratios$Caslicecell <- paste(aucratios$Case, 
+                               aucratios$Slice, 
+                               aucratios$Cell,
+                                     sep = "_")
+aucratios$Caslice <- paste(aucratios$Case, 
+                           aucratios$Slice, 
+                           sep = "_")
+aucratios <- aucratios %>%
+group_by(Caslicecell)%>%
+  mutate(
+         lghgmfi = cellmfiHG/cellmfiLG,
+         lgkclmfi = cellmfiKCL/cellmfiLG)%>%
+ungroup() 
+
+ratiosmfilm <- lm(lghgmfi ~ Type, data = aucratios)
+ratiosmfianova <- aov(lghgmfi ~ Type, data = aucratios) 
+hist(residuals(ratiosmfilm))
+ratiosmfitukeys <- TukeyHSD(ratiosmfianova)
+ tidy(ratiosmfianova)
+ tidy(ratiosmfitukeys)
+
+skewness(aucratios$lghgmfi)
+
+ggdensity(aucratios, x = "lghgmfi",
+          add = "mean",
+          color = "Type_fct",
+          title = "LGHG MFI")+
+  stat_overlay_normal_density(color = "black", linetype = "dashed")
+```
+## LGHG MFI Ratio - Linear Mixed Effects Model 
+``` {r}
+#Combined LGHG Ratio 
+lghgmfimodel = lme(lghgmfi ~ Type_fct, random=~1|Case,
+                 data = aucratios,
+                 method = "REML")
+lghgmfimodelaov = anova.lme(lghgmfimodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(lghgmfimodelaov)
+posthoclghgmfi = glht(lghgmfimodel, 
+                    linfct = mcp(Type_fct = "Tukey"))
+mcslghgmfi = summary(posthoclghgmfi,
+              test = adjusted("single-step"))
+tidy(mcslghgmfi)
+hist(residuals(lghgmfimodel))
+```
+## Data Manipulation - Percent Repsonding
+```{r}
+percentresponding <- filter(aucratios, lghgmfi >= 1.2)
+ndrespond <- filter(percentresponding, Type == "No Diabetes")
+ndrespondn <- nrow(ndrespond) 
+aabrespond <- filter(percentresponding, Type == "Aab+")
+aabrespondn <- nrow(aabrespond) 
+t1drespond <- filter(percentresponding, Type == "T1D")
+t1drespondn <- nrow(t1drespond) 
+ndall <- filter(aucratios, Type == "No Diabetes")
+ndalln <- nrow(ndall)
+aaball <- filter(aucratios, Type == "Aab+")
+aaballn <- nrow(aaball) 
+t1dall <- filter(aucratios, Type == "T1D")
+t1dalln <- nrow(t1dall)
+ndpercent <- (ndrespondn/ndalln)
+aabpercent <- (aabrespondn/aaballn)
+t1dpercent <- (t1drespondn/t1dalln)
+
+percentrespondingislet <- percentresponding %>%
+  group_by(Caslice)%>%
+  mutate(responding = length(lghgmfi))
+
+aucratios <- aucratios %>%
+  group_by(Caslice) %>%
+  mutate(respondingall = length(lghgmfi))
+
+allpercentrespondingmerge <- merge(aucratios, percentrespondingislet, 
+                                   all = TRUE) %>%
+  mutate(percentresponse = responding/respondingall)%>%
+  distinct(Case, Slice, Type, .keep_all = TRUE)
+
+allpercentrespondingmerge2 <- merge(percentrespondingislet, aucratios)%>%
+  mutate(percentresponse = responding/respondingall) %>%
+  distinct(Case, Slice, Type, .keep_all = TRUE)
+allpercentrespondingmerge2trunc <- subset(allpercentrespondingmerge2, 
+                                          select = -c(Cell, 
+                                                      Caslicecell, 
+                                                      responding, 
+                                                      respondingall))
+
+aucratios2<- subset(aucratios, select = -c(Cell, 
+                                           Caslicecell, 
+                                           respondingall)) %>%
+  distinct(Case, Slice, Type, .keep_all = TRUE)
+missing <- anti_join(aucratios2, allpercentrespondingmerge2, 
+                     by = join_by(Caslice)) %>%
+  mutate(percentresponse = 0)
+allpercentandmissing <- rbind(allpercentrespondingmerge2trunc, missing) %>%
+  group_by(Case) %>%
+  mutate(casepercentresponse = mean(percentresponse))
+
+percentresponsebycase <- allpercentandmissing %>%
+  distinct(Case, .keep_all = TRUE)
+percentresponsebycase <- merge(percentresponsebycase, NPODData)
+```
+
+##Percent Responding by Case - Linear Mixed Effects Model 
+``` {r}
+#Female Percent Responding linear mixed effects model
+femalepercentresponse <- filter(percentresponsebycase, Gender == "Female")
+femalepercentresponselmemodel = lme(casepercentresponse ~ Type_fct, 
+                                    random=~1|Case,
+                                    data = femalepercentresponse,
+                                    method = "REML")
+femalepercentresponselmemodelaov = anova.lme(femalepercentresponselmemodel, 
+                                             type = "sequential",
+                                             adjustSigma = FALSE)
+tidy(femalepercentresponselmemodelaov)
+posthocfemalepercentresponselme = glht(femalepercentresponselmemodel, 
+                                       linfct = mcp(Type_fct = "Tukey"))
+mcsfemalepercentresponse = summary(posthocfemalepercentresponselme,
+                                   test = adjusted("single-step"))
+tidy(mcsfemalepercentresponse)
+hist(residuals(femalepercentresponselmemodel))
+
+#male Percent Responding linear mixed effects model
+malepercentresponse <- filter(percentresponsebycase, Gender == "Male")
+malepercentresponselmemodel = lme(casepercentresponse ~ Type_fct, 
+                                  random=~1|Case,
+                                  data = malepercentresponse,
+                                  method = "REML")
+malepercentresponselmemodelaov = anova.lme(malepercentresponselmemodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(malepercentresponselmemodelaov)
+posthocmalepercentresponselme = glht(malepercentresponselmemodel, 
+                    linfct = mcp(Type_fct = "Tukey"))
+mcsmalepercentresponse = summary(posthocmalepercentresponselme,
+              test = adjusted("single-step"))
+tidy(mcsmalepercentresponse)
+hist(residuals(malepercentresponselmemodel))
+
+#Percent Responding linear mixed effects model
+percentresponselmemodel = lme(casepercentresponse ~ Type_fct, 
+                              random=~1|Case,
+                              data = percentresponsebycase,
+                              method = "REML")
+percentresponselmemodelaov = anova.lme(percentresponselmemodel, 
+                                       type = "sequential",
+                                       adjustSigma = FALSE)
+tidy(percentresponselmemodelaov)
+posthocpercentresponselme = glht(percentresponselmemodel, 
+                                 linfct = mcp(Type_fct = "Tukey"))
+mcspercentresponse = summary(posthocpercentresponselme,
+                             test = adjusted("single-step"))
+tidy(mcspercentresponse)
+hist(residuals(percentresponselmemodel))
+```
+
+## LGHG MFI by Case - Linear Mixed Effects Model  
+``` {r}
+#Percent Responding  
+lghgmfilmemodel = lme(lghgmfi ~ Type_fct, random=~1|Case,
+                 data = percentresponsebycase,
+                 method = "REML")
+lghgmfilmemodelaov = anova.lme(lghgmfilmemodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(lghgmfilmemodelaov)
+posthoclghgmfilme = glht(lghgmfilmemodel, 
+                    linfct = mcp(Type_fct = "Tukey"))
+mcslghgmfi = summary(posthoclghgmfilme,
+              test = adjusted("single-step"))
+tidy(mcslghgmfi)
+hist(residuals(lghgmfilmemodel))
+```
+
+## Data Manipulation - Grouping Peak Response max values by case and analyzing 
+```{r}
+HGmaxbyCase <- HGmax %>%
+group_by(Case) %>%
+  mutate(caseHGmax = mean(max)) %>%
+  distinct(Case, .keep_all = TRUE)
+
+LGmaxbyCase <- LGmax %>%
+  group_by(Case) %>%
+  mutate(caseLGmax = mean(max)) %>%
+  distinct(Case, .keep_all = TRUE)
+
+KCLmaxbyCase <- KCLmax %>%
+  group_by(Case) %>%
+  mutate(caseKCLmax = mean(max)) %>%
+  distinct(Case,.keep_all = TRUE)
+```
+## LG Peak Response by Case - Linear Model 
+```{r}
+LGmaxbyCaseaov <- aov(caseLGmax ~ Type, data = LGmaxbyCase) 
+LGmaxbyCasetukeys <- TukeyHSD(LGmaxbyCaseaov)
+ tidy(LGmaxbyCaseaov)
+ tidy(LGmaxbyCasetukeys)
+skewness(LGmaxbyCase$caseLGmax)
+
+ggdensity(LGmaxbyCase, x = "caseLGmax",
+          add = "mean",
+          color = "Type_fct",
+          title = "LG Peak Response (by Case)")+
+  stat_overlay_normal_density(color = "black", linetype = "dashed")
+
+hist(residuals(LGmaxbyCaseaov))
+``` 
+## HG Peak Response by Case - Linear Model 
+``` {r}
+HGmaxbyCaseaov <- aov(caseHGmax ~ Type, data = HGmaxbyCase)
+HGmaxbyCasetukeys <- TukeyHSD(HGmaxbyCaseaov) 
+ tidy(HGmaxbyCaseaov)
+ tidy(HGmaxbyCasetukeys)
+ 
+ skewness(HGmaxbyCase$caseHGmax)
+
+ggdensity(HGmaxbyCase, x = "caseHGmax",
+          add = "mean",
+          color = "Type_fct",
+          title = "HG Peak Response (by Case)")+
+  stat_overlay_normal_density(color = "black", linetype = "dashed")
+
+hist(residuals(HGmaxbyCaseaov))
+```
+## KCL Peak Response by Case - Linear Model 
+```{r}
+KCLmaxbyCaseaov <- aov(caseKCLmax ~ Type, data = KCLmaxbyCase) 
+KCLmaxbyCasetukeys <- TukeyHSD(KCLmaxbyCaseaov) 
+ tidy(KCLmaxbyCaseaov)
+ tidy(KCLmaxbyCasetukeys)
+ 
+  skewness(KCLmaxbyCase$caseKCLmax)
+
+ggdensity(KCLmaxbyCase, x = "caseKCLmax",
+          add = "mean",
+          color = "Type_fct",
+          title = "KCL Peak Response (by Case)")+
+  stat_overlay_normal_density(color = "black", linetype = "dashed")
+
+hist(residuals(KCLmaxbyCaseaov))
+```
+## Writing excel files
+```{r} 
+write.csv(allpercentandmissing, "percentresponding.csv")
+```
+
+## Plotting: Percent Response
+```{r}
+ggplot(allpercentandmissing, aes(x=Type_fct,y=percentresponse))+
+  geom_violin(trim = FALSE, adjust = 0.5, fill = "#ececec", linetype = 0)+
+  stat_summary(fun = "mean", 
+               geom = "crossbar", 
+               width = 0.25,
+               linewidth = 0.5)+
+  geom_quasirandom(aes(color = Case), alpha = 0.75, width = 0.25,size = 2)+
+  ylim(0,1)+
+  labs(x = "Type",
+       y = "Percent response")+
+  scale_color_manual(values = c(`6505` = "#520229", 
+                                `6512` = "#6d0337", 
+                                `6516` = "#000000", 
+                                `6518` = "#fcacd3",
+                                `6523` = "#011d22",
+                                `6530` = "#121212",
+                                `6532` = "#bf0660",
+                                `6533` = "#033a45",
+                                `6535` = "#242424",
+                                `6536` = "#045768",
+                                `6538` = "#db076e",
+                                `6539` = "#363636",
+                                `6540` = "#484848",
+                                `6550` = "#06748b",
+                                `6551` = "#0891ae",
+                                `6552` = "#5B5B5B",
+                                `6558` = "#f6087b",
+                                `6562` = "#f7238a",
+                                `6563` = "#09aed0",
+                                `CV14` = "#6d6d6d",
+                                `6569` = "#f83f98",
+                                `CV15` = "#f95aa7",
+                                `6573` = "#fa75b6",
+                                `6578` = "#0bcbf3",
+                                `6579` = "#2ed2f5",
+                                `6582` = "#fb91c4",
+                                `6583` = "#7f7f7f",
+                                `6584` = "#919191",
+                                `6586` = "#a3a3a3",
+                                `6588` = "#b6b6b6",
+                                `6590` = "#c8c8c8",
+                                `6591` = "#50daf6",
+                                `6597` = "#dadada",
+                                `6598` = "#ececec"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA),
+         aspect.ratio = 3/3,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA),
+         axis.title.x = element_blank())
+ggsave("PercentResponders.pdf")
+```
+
+## Plotting: Percent Response (Gender Effects) 
+```{r}
+ggplot(allpercentandmissing, aes(x=Type_fct,y=percentresponse))+
+  geom_violin(trim = FALSE, adjust = 0.5, fill = "#ececec", linetype = 0)+
+  stat_summary(fun = "mean", 
+               geom = "crossbar", 
+               width = 0.25,
+               linewidth = 0.5)+
+  geom_quasirandom(aes(color = Case), alpha = 0.75, width = 0.25,size = 2)+
+  facet_wrap(vars(Gender))+
+  ylim(0,1)+
+  labs(x = "Type",
+       y = "Percent response")+
+  scale_color_manual(values = c(`6505` = "#520229", 
+                                `6512` = "#6d0337", 
+                                `6516` = "#000000", 
+                                `6518` = "#fcacd3",
+                                `6523` = "#011d22",
+                                `6530` = "#121212",
+                                `6532` = "#bf0660",
+                                `6533` = "#033a45",
+                                `6535` = "#242424",
+                                `6536` = "#045768",
+                                `6538` = "#db076e",
+                                `6539` = "#363636",
+                                `6540` = "#484848",
+                                `6550` = "#06748b",
+                                `6551` = "#0891ae",
+                                `6552` = "#5B5B5B",
+                                `6558` = "#f6087b",
+                                `6562` = "#f7238a",
+                                `6563` = "#09aed0",
+                                `CV14` = "#6d6d6d",
+                                `6569` = "#f83f98",
+                                `CV15` = "#f95aa7",
+                                `6573` = "#fa75b6",
+                                `6578` = "#0bcbf3",
+                                `6579` = "#2ed2f5",
+                                `6582` = "#fb91c4",
+                                `6583` = "#7f7f7f",
+                                `6584` = "#919191",
+                                `6586` = "#a3a3a3",
+                                `6588` = "#b6b6b6",
+                                `6590` = "#c8c8c8",
+                                `6591` = "#50daf6",
+                                `6597` = "#dadada",
+                                `6598` = "#ececec"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA),
+         aspect.ratio = 3/3,
+         title = element_text(size = 6, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA),
+         axis.title.x = element_blank())
+ggsave("PercentResponders_gendersplit.pdf")
+```
+
+## Plotting: AUC Ratios lg/hg mfi 
+```{r}
+ggplot(aucratios, aes(x=Type_fct,y=lghgmfi, color = Case))+
+  geom_quasirandom(alpha = 0.75, width = 0.25, size = 1)+
+  geom_hline(yintercept = 1.2, linetype = "dotted")+
+  labs(x = "Type",
+       y = "LG/HG Ratio (Cell)")+
+  scale_color_manual(values = c(`6505` = "#520229", 
+                                `6512` = "#6d0337", 
+                                `6516` = "#000000", 
+                                `6518` = "#fcacd3",
+                                `6523` = "#011d22",
+                                `6530` = "#121212",
+                                `6532` = "#bf0660",
+                                `6533` = "#033a45",
+                                `6535` = "#242424",
+                                `6536` = "#045768",
+                                `6538` = "#db076e",
+                                `6539` = "#363636",
+                                `6540` = "#484848",
+                                `6550` = "#06748b",
+                                `6551` = "#0891ae",
+                                `6552` = "#5B5B5B",
+                                `6558` = "#f6087b",
+                                `6562` = "#f7238a",
+                                `6563` = "#09aed0",
+                                `CV14` = "#6d6d6d",
+                                `6569` = "#f83f98",
+                                `CV15` = "#f95aa7",
+                                `6573` = "#fa75b6",
+                                `6578` = "#0bcbf3",
+                                `6579` = "#2ed2f5",
+                                `6582` = "#fb91c4",
+                                `6583` = "#7f7f7f",
+                                `6584` = "#919191",
+                                `6586` = "#a3a3a3",
+                                `6588` = "#b6b6b6",
+                                `6590` = "#c8c8c8",
+                                `6591` = "#50daf6",
+                                `6597` = "#dadada",
+                                `6598` = "#ececec"
+                                ))+
+   theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 8, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("abovethreshcellmfi_withmaab.pdf")
+```
+
+```{r}
+Summaryfraction <- allpercentandmissing %>%
+ mutate(Type = replace(Type, which(Type == "T1D" & `T Cell Count` >= 6), "T1D (6+ T Cells)")) %>%
+ mutate(Type_fct = factor(Type)) %>%
+mutate(Type_fct = fct_relevel(Type_fct, 
+                         c("No Diabetes","Aab+", "T1D", "T1D (6+ T Cells)"))) 
+
+ggplot(Summaryfraction)+
+  geom_bar(aes(Type_fct, percentresponse, fill= Type_fct),
+           position = "dodge", stat = "summary", fun.y =   "mean", alpha = 0.75)+
+  scale_fill_manual(values = c(`ND` = "#000000",
+                           
+                               `Aab+` = "#F71482",
+                                `T1D` = "#077E97",
+                                `T1D (6+ T Cells)` = "#077E97"))+
+  geom_quasirandom(aes(x = Type_fct, y = percentresponse, color = Case), width = 0.25, size = 2)+
+  scale_color_manual(values = c(`6505` = "#520229", 
+                                `6512` = "#6d0337", 
+                                `6516` = "#000000", 
+                                `6518` = "#fcacd3",
+                                `6523` = "#011d22",
+                                `6530` = "#121212",
+                                `6532` = "#bf0660",
+                                `6533` = "#033a45",
+                                `6535` = "#242424",
+                                `6536` = "#045768",
+                                `6538` = "#db076e",
+                                `6539` = "#363636",
+                                `6540` = "#484848",
+                                `6550` = "#06748b",
+                                `6551` = "#0891ae",
+                                `6552` = "#5B5B5B",
+                                `6558` = "#f6087b",
+                                `6562` = "#f7238a",
+                                `6563` = "#09aed0",
+                                `CV14` = "#6d6d6d",
+                                `6569` = "#f83f98",
+                                `CV15` = "#f95aa7",
+                                `6573` = "#fa75b6",
+                                `6578` = "#0bcbf3",
+                                `6579` = "#2ed2f5",
+                                `6582` = "#fb91c4",
+                                `6583` = "#7f7f7f",
+                                `6584` = "#919191",
+                                `6586` = "#a3a3a3",
+                                `6588` = "#b6b6b6",
+                                `6590` = "#c8c8c8",
+                                `6591` = "#50daf6",
+                                `6597` = "#dadada",
+                                `6598` = "#ececec"
+                                ))+
+  theme(legend.position = "none",
+         legend.key = element_rect(fill = NA), 
+         aspect.ratio = 2/2,
+         title = element_text(size = 8, face = "bold"),
+         axis.line = element_line(colour = "black"),
+         panel.background = element_rect(fill = NA),
+         strip.background = element_rect(fill = NA), 
+         axis.title.x = element_blank())
+ggsave("Tcellbargraph_withmaab.pdf")
+  
+```
+
+## Percent Response - T Cell Split - by Case - Linear Model 
+```{r}
+percentresponsetcellaov <- aov(percentresponse ~ Type_fct, data = Summaryfraction) 
+percentresponsetcelltukeys <- TukeyHSD(percentresponsetcellaov) 
+ tidy(percentresponsetcellaov)
+ tidy(percentresponsetcelltukeys)
+ 
+  skewness(Summaryfraction$percentresponse)
+
+ggdensity(Summaryfraction, x = "percentresponse",
+          add = "mean",
+          color = "Type_fct",
+          title = "Percent Response (by Case, T Cell split)")+
+  stat_overlay_normal_density(color = "black", linetype = "dashed")
+
+hist(residuals(percentresponsetcellaov))
+```
+
+``` {r}
+#Percent Responding  
+percentresponstcelllmemodel = lme(percentresponse ~ Type_fct, random=~1|Case,
+                 data = Summaryfraction,
+                 method = "REML")
+percentresponstcelllmemodelaov = anova.lme(percentresponstcelllmemodel, 
+                 type = "sequential",
+                 adjustSigma = FALSE)
+tidy(percentresponstcelllmemodelaov)
+posthocpercentresponstcelllmemodel = glht(percentresponstcelllmemodel, 
+                    linfct = mcp(Type_fct = "Tukey"))
+mcspercentresponstcell = summary(posthocpercentresponstcelllmemodel,
+              test = adjusted("single-step"))
+tidy(mcspercentresponstcell)
+hist(residuals(percentresponstcelllmemodel))
+```
