@@ -1,0 +1,286 @@
+---
+title: "MollieRCode_2_1_13_2023"
+author: "Adrienne Widener"
+date: "2023-01-13"
+output: pdf_document
+---
+
+```{r}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(readxl)
+library(ggplot2)
+library(bayestestR)
+library(viridis)
+options(scipen = 2, digits = 4)
+```
+## Import and Normalize Data 
+```{r}
+rawdata <- read_xlsx("./data/6505_S2_I1 ROI traces AW.xlsx")
+framerate <- 2.873
+framerate <- framerate/60
+KCLAdjust <- 0
+HGStart <- 105
+HGStart_Min <- HGStart*framerate + KCLAdjust
+HGEnd <- 313  
+HGEnd_Min <- HGEnd*framerate + KCLAdjust
+#LG2Start <- 3193
+#LG2Start_Min <- LG2Start*framerate
+KCLStart <- 314
+KCLEnd_Min <- max(rawdata$Frame)*framerate
+KCLStart_Min <- KCLStart*framerate + KCLAdjust
+Cellmax <- ncol(rawdata)
+```
+
+```{r}
+#Normalizing Data
+f0data1 <- filter(rawdata, Frame %in% 1:10) #Selecting only the first 10 frames 
+# This can be changed to include however many frames you wish to normalize by. 
+f0data2 <- select(f0data1, -Frame)
+# This is a step taken to index appropriately, we must use the first 30 frames 
+# to get the mean value, but we do not want the Frame index when normalizing the
+# data 
+normaldata <- select(rawdata, -Frame)
+# The same as above, we do not want to include the frame index when normalizing 
+# the data. 
+for (i in 1:ncol(normaldata)) {
+  f0 <- colMeans(f0data2[,i])
+  for(j in 1:nrow(normaldata)) {
+    normaldata[j,i] <- normaldata[j,i]/f0
+    }
+  }
+# This is the actual normalization step, we are filtering through every column 
+# of the "normaldata" set by column (which is each individual cell), going from 
+# the 1st column to the end of the columns in the normaldata set. 
+# The second line is to determine the mean Fluorescence value for the column we are 
+# indexed under. This value changes with every iteration of the for loop. 
+# The third and fourth line is then filtering through the rows, normalizing every 
+# Fluorescence value taken to the first 30 frames of recording. This repeats through 
+# every time point for this cell. Since it is embedded within the for loop on line 41
+# this normalization will repeat for every cell. 
+```
+
+```{r}
+#MAYBE CHANGE THINGS _ ASK ADRIENNE FIRST
+data <- normaldata %>%
+  mutate(time = rawdata$Frame*framerate)
+LGData <- filter(data, time >= framerate & time < HGStart_Min) 
+HGData <-filter(data, time >= HGStart_Min & time < HGEnd_Min) 
+KCLData <- filter(data, time >= KCLStart_Min)
+KCLMax <- max(select(data, -c(time)))
+KCLMin <- min(select(data, -c(time)))
+```
+
+```{r, echo = FALSE}
+#Tidying Data - DO NOT CHANGE
+LongHGData <- HGData %>%
+  pivot_longer(
+    cols = 1:ncol(HGData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+  group_by(Cell) %>%
+  mutate(average = mean(Fluorescence),
+         auc = auc(time, Fluorescence, method = "trapezoid"))
+LongData <- data %>%
+  pivot_longer(
+    cols = 1:ncol(data)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+    mutate(Cell = as_factor(Cell)) %>%
+    group_by(time) %>%
+    mutate(average = mean(Fluorescence), 
+         sd_fluorescence = sd(Fluorescence),
+         sd_above = average + sd_fluorescence,
+         sd_below = average - sd_fluorescence)
+LongLGData <- LGData %>%
+  pivot_longer(
+    cols = 1:ncol(LGData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+  group_by(time) %>%
+  mutate(average = mean(Fluorescence)) 
+LongKCLData <- KCLData %>%
+  pivot_longer(
+    cols = 1:ncol(KCLData)-1,
+    names_to = "Cell",
+    values_to = "Fluorescence") %>%
+  group_by(time) %>%
+  mutate(average = mean(Fluorescence))
+```
+
+## Heatmap Code with normalized color scale 
+```{r}
+#OKAY TO CHANGE THINGS 
+jet.colors <-
+  colorRampPalette(c("#00007F","blue", "#007FFF", "cyan",
+                     "#7FFF7F", "#FF7F00", "red", "#7F0000", 
+                     "#702963","purple", "#FF00FF", "#FFFFFF"))
+
+LongData %>%
+  mutate(Cell = fct_reorder(Cell, Fluorescence)) %>%
+  ggplot(aes(
+    x = time, 
+    y = reorder(Cell,Fluorescence),
+    fill = Fluorescence)) + 
+  scale_x_continuous(expand = c(0,0))+
+  geom_tile()+
+  scale_fill_gradientn(colors = jet.colors(20), 
+                       limits = c(0, 6))+
+  #This is the line for average trace
+  geom_line(aes(time, average*((Cellmax/2)-2)), #The number multiplying the average is a scaling factor that can be changed depending on the number of cells. 
+            colour = "white", 
+            size = 1)+ #This number changes the width of the line 
+  #This is the Label for the Low Glucose Response 
+  annotate("text",
+           x = 0, 
+           y = Cellmax + 0.5,
+           label = "3G",
+           colour = "black",
+           hjust = 0,
+           size = 3)+
+  #This is the line for the High Glucose Response 
+  geom_vline(xintercept = HGStart_Min, 
+             colour = "white",
+             linetype = "dashed",
+             size = 1)+
+  #This is the label for the High Glucose Response 
+  annotate("text",
+           x = HGStart_Min,
+           y = Cellmax + 0.5, 
+           label = "16.7G",
+           colour = "black",
+           hjust = 0,
+           size = 3)+
+  #This is the line for the Second Low Glucose Response 
+  # geom_vline(xintercept = LG2Start_Min + KCLAdjust,
+  #            colour = "white",
+  #            linetype = "dotdash") +
+  #This is the label for the Second Low Glucose Response 
+  # annotate("text", 
+  #          x = LG2Start_Min + KCLAdjust,
+  #          y = Cellmax + 1, 
+  #          label = "3G",
+  #          colour = "black",
+  #          hjust = 0,
+  #          size = 3) +
+   #This is the line for the KCL Response 
+  geom_vline(xintercept = KCLStart_Min,
+             colour = "white",
+             linetype = "dashed",
+             size = 1) +
+  #This is the label for the KCL Response 
+  annotate("text", 
+           x = KCLStart_Min,
+           y = Cellmax + 0.5, 
+           label = "KCl",
+           colour = "black",
+           hjust = 0,
+           size = 3) +
+  #To add another stimulation marker please uncomment and adjust the following: 
+  #geom_vline(xintercept = (Insert time point for stimulation in minutes),
+  #            colour = "white", 
+  #            linetype = "dotdash") + 
+  #annotate("text", 
+  #         x = (insert time point for stimulation in minutes), 
+  #         y = 12, 
+  #         label = "(Insert label here)"
+  #         colour = "black",
+  #         hjust = 0) + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(),
+        aspect.ratio = 1/5,
+        axis.ticks.y = element_blank(),
+        legend.key.height = unit(0.5,"cm"),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        title = element_text(size = 8, face = "bold"))+
+  labs(x = "Time (min)",
+       y = element_blank(), 
+       title = "nPOD case: 6505",
+       fill = expression("F/F"[0]))+  
+  scale_y_discrete(labels = NULL)+
+  scale_x_continuous(breaks = scales::breaks_width(5),
+                     expand = expansion(0))+
+  coord_cartesian(clip = "off") 
+  ggsave("6505_2_heatmap.png")
+```
+
+##Ridgeline Plot for Selected Traces 
+
+```{r}
+ggplot(LongData, aes(x = time, y = Fluorescence)) +
+  geom_line()+
+  facet_grid(reorder(Cell, Fluorescence) ~ .) +
+  theme(strip.text.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.background = element_blank(),
+        axis.line.x.bottom = element_line(),
+        axis.title.x = element_text(size = 8, face ="bold"))+
+  labs(y = element_blank(),
+       x = "Time (min)")+
+  scale_y_discrete(labels = NULL) +
+  scale_x_continuous(breaks = scales::breaks_width(5),
+                     expand = expansion(0))
+  ggsave("6505_2_Alltraces.png")
+```
+
+##Average Trace 
+``` {r}
+LongData %>%
+  ggplot(aes(time, average))+
+  geom_line(color = "black")+
+  annotate("text",
+           x = 0.5, 
+           y = 3.0,
+           label = "3G",
+           colour = "black",
+           hjust = 0)+
+  geom_vline(xintercept = HGStart_Min, 
+             colour = "black",
+             linetype = "dashed")+
+  annotate("text",
+           x = HGStart_Min + 0.5,
+           y = 3.0, 
+           label = "16.7G",
+           colour = "black",
+           hjust = 0)+
+  # geom_vline(xintercept = LG2Start_Min,
+  #            colour = " black",
+  #            linetype = "dotdash") +
+  # annotate("text", 
+  #          x = LG2Start_Min + 1,
+  #          y = 3.0,
+  #          label = "Low Glucose",
+  #          colour = "black",
+  #          hjust = 0) +
+  geom_vline(xintercept = KCLStart_Min,
+             colour = " black",
+             linetype = "dashed") +
+  annotate("text", 
+           x = KCLStart_Min + 0.5,
+           y = 3.0,
+           label = "KCl",
+           colour = "black",
+           hjust = 0) +
+  theme_classic()+
+  labs(y = expression("F/F"[0]),
+       x = "Time (min)")+
+  scale_x_continuous(breaks = scales::breaks_width(5),
+                     expand = expansion(0))
+  ggsave("6505_2_AverageTrace.png")
+```
+##AUC Values 
+```{r}
+#Average AUC at each point (low glucose, high glucose, KCL)
+auc_LG <- auc(LongLGData$time, LongLGData$average, method = "trapezoid")
+auc_LG_permin <- auc_LG/(HGStart_Min)
+auc_HG <- auc(LongHGData$time, LongHGData$average, method = "trapezoid")
+auc_HG_permin <- auc_HG/(HGEnd_Min - HGStart_Min)
+auc_KCL <- auc(LongKCLData$time, LongKCLData$average, method = "trapezoid")
+auc_KCL_permin <- auc_KCL/(KCLEnd_Min - KCLStart_Min)
+auc <- auc(LongData$time, LongData$average, method = "trapezoid")
+auc_permin <- auc/(KCLEnd_Min)
+```
